@@ -1,74 +1,68 @@
-use std::io::Write;
 use std::{
-    io::{BufRead, BufReader, ErrorKind},
-    net::{TcpListener, TcpStream},
+    io::{ErrorKind, Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
+    str::FromStr,
     thread,
 };
-pub static ADDR: &str = "127.0.0.1:7070";
-pub fn start() -> TcpListener {
-    let listener = TcpListener::bind(ADDR).unwrap();
-    println!("Server startet");
-    for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        println!("Neuer Client");
-        thread::spawn(|| {
-            handle_client(stream);
-        });
-    }
-    return listener;
-}
-fn handle_client(stream: TcpStream) {
-    let adress = stream.peer_addr().unwrap().to_string();
-    let mut stream_out = stream.try_clone().unwrap();
-    //loop {
-    //let stream_in = &mut &stream;
+//pub static ADDR: &str = "127.0.0.1:7070";
+pub fn start(address: &str) {
+    let ip_address = SocketAddr::from_str(address).expect("Invalid Ip address");
+    let listener = TcpListener::bind(ip_address).expect("Server konnte nicht starten.");
+    println!("Server gestartet auf {}", address);
 
-    let buf_reader = BufReader::new(stream);
-    /*let mut buffer = [0 as u8; 512]; // using 512 byte buffer
-    match stream_ref.read(&mut buffer) {
-        Ok(n) => {
-            if n == 0 {
-                println!("Server closed connection");
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                println!("Neuer Client verbunden: {:?}", stream.peer_addr());
+                thread::spawn(|| {
+                    handle_client(stream);
+                });
+            }
+            Err(e) => {
+                eprintln!("Fehler beim Akzeptieren eines Clients: {}", e);
+            }
+        }
+    }
+}
+fn handle_client(mut stream: TcpStream) {
+    let client_address = stream.peer_addr().unwrap();
+    println!("Verbunden mit {}", client_address);
+    let mut buffer = [0u8; 512]; // 512-Byte-Puffer für eingehende Nachrichten
+
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => {
+                // Verbindung geschlossen
+                println!("Client {} hat die Verbindung geschlossen.", client_address);
                 break;
             }
+            Ok(n) => {
+                let received = String::from_utf8_lossy(&buffer[..n]);
+                println!("Empfangen von {}: {}", client_address, received);
 
-            println!("Received: {}", String::from_utf8_lossy(&buffer[..n]));
-            stream_ref.flush().expect("Flushing Error");
-        }
-        Err(e) => {
-            if e.kind() == ErrorKind::ConnectionReset {
-                handle_connection_lost(&adress);
-                return;
-            }else{
-                panic!("Client hat kacke geschickt:{e}");
+                // Antwort senden
+                let response: &str;
+                if received.trim() == "Hello" {
+                    response = "Hello, Client!\n";
+                } else {
+                    response = "Unbekannte Nachricht\n";
+                }
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                // Keine Daten verfügbar
+                continue;
+            }
+            Err(ref e) if e.kind() == ErrorKind::ConnectionReset => {
+                println!("Verbindung von {} wurde zurückgesetzt.", client_address);
+                break;
+            }
+            Err(e) => {
+                eprintln!("Fehler beim Lesen von {}: {}", client_address, e);
+                break;
             }
         }
     }
-    let response = "HEllo";
 
-    stream_ref.write_all(response.as_bytes()).unwrap();*/
-
-    for line_result in buf_reader.lines() {
-        let out_line = match line_result {
-            Ok(line) => line,
-            Err(error) => match error.kind() {
-                ErrorKind::ConnectionReset => handle_connection_lost(&adress),
-                _ => {
-                    panic!("Client hat kacke geschickt:{error}");
-                }
-            },
-        };
-        if out_line.is_empty() {
-            return;
-        }
-        println!("{:?}", out_line);
-        let response = "HEllo";
-
-        stream_out.write_all(response.as_bytes()).unwrap();
-        //}
-    }
-}
-fn handle_connection_lost(stream: &String) -> String {
-    println!("Lost Connection to Client{stream:?}");
-    return String::new();
+    println!("Beende Verbindung mit {}", client_address);
 }
