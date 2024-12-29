@@ -1,30 +1,33 @@
 use std::{
-    io::{stdin, ErrorKind, Read, Write},
-    net::{SocketAddr, TcpStream},
-    str::FromStr,
-    thread,
+    io::{stdin, ErrorKind, Read, Write}, net::{Shutdown, SocketAddr, TcpStream}, str::FromStr, sync::{mpsc::{Receiver, TryRecvError}, Arc, Mutex}, thread
 };
 //pub static ADDR: &str = "127.0.0.1:7070";
-pub fn start(address: &str) -> std::io::Result<()> {
+pub fn start(address: &str, reciver: Receiver<()>) {
     let ip_address = SocketAddr::from_str(address).expect("Invalid Ip address");
     let stream = TcpStream::connect(ip_address).expect("Verbindung zum Server fehlgeschlagen.");
     let stream_clone = stream
         .try_clone()
         .expect("Klonen des Streams fehlgeschlagen.");
 
+    let a_receiver: Arc<Mutex<Receiver<()>>> = Arc::new(Mutex::new(reciver));
+    let receiver_clone = a_receiver.clone();
     thread::spawn(move || {
-        read_data(stream_clone);
+        read_data(stream_clone, receiver_clone);
     });
 
-    write_input(stream)
+    write_input(stream,a_receiver);
 }
-fn write_input(mut stream: TcpStream) -> std::io::Result<()> {
+fn write_input(mut stream: TcpStream, reciver: Arc<Mutex<Receiver<()>>>){
     let mut input_text = String::new();
     let msg = "Hello, my name is client!\r\n";
     println!("{}", msg);
     stream.write_all(msg.as_bytes()).unwrap();
 
     loop {
+        match reciver.lock().unwrap().try_recv(){
+            Ok(_) | Err(TryRecvError::Disconnected)=>{break;}
+            Err(TryRecvError::Empty) => {}
+        }
         println!("Bitte Text eingeben: ");
         input_text.clear();
         stdin()
@@ -36,12 +39,17 @@ fn write_input(mut stream: TcpStream) -> std::io::Result<()> {
             continue;
         }
 
-        stream.write_all(input_text.as_bytes()).unwrap();
-        stream.flush()?;
+        stream.write_all(input_text.as_bytes()).expect("Cannot write Input to Stream");
+        stream.flush().expect("Flushing Error");
     }
+    stream.shutdown(Shutdown::Both).expect("shutdown call failed");
 }
-fn read_data(mut stream: TcpStream) {
+fn read_data(mut stream: TcpStream,reciver: Arc<Mutex<Receiver<()>>>) {
     loop {
+        match reciver.lock().unwrap().try_recv(){
+            Ok(_) | Err(TryRecvError::Disconnected)=>{break;}
+            Err(TryRecvError::Empty) => {}
+        }
         let mut buffer = [0 as u8; 512]; // using 512 byte buffer
         match stream.read(&mut buffer) {
             Ok(0) => {
